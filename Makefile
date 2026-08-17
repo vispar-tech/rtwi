@@ -1,4 +1,4 @@
-.PHONY: help install fix lint types test check clean pre-commit binary package
+.PHONY: help install fix lint types test check clean pre-commit binary package installer
 
 POETRY ?= poetry
 
@@ -30,6 +30,9 @@ clean: ## Remove build artifacts
 
 pre-commit: ## Run pre-commit hooks on all files
 	$(POETRY) run pre-commit run -a
+
+installer: ## Install the standalone rtwi binary
+	./install.sh
 
 binary: ## Build a standalone onedir rtwi into dist/rtwi/ (PyInstaller rtwi.spec)
 	$(POETRY) run pyinstaller --noconfirm --clean rtwi.spec
