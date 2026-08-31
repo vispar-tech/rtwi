@@ -6,7 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from rtwi import __version__, rollmac
+from rtwi import __version__, rollmac, self_update
 from rtwi import config as cfg
 from rtwi.fix import run_fix
 from rtwi.machine import RTMachine
@@ -177,6 +177,28 @@ def config() -> None:
     editor = os.environ.get("EDITOR") or "vim"
     console.print(f"editing {path}")
     subprocess.run([editor, str(path)])  # noqa: S603
+
+
+@app.command("self-update")
+def self_update_cmd(
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation prompt"),
+) -> None:
+    """Update the rtwi binary to the latest release."""
+    console.print("checking for updates...")
+    result = self_update.check_for_update()
+    if result.updated or result.current == result.latest:
+        console.print(f"[green]{result.message}[/green]")
+        raise typer.Exit
+
+    console.print(f"[yellow]{result.message}[/yellow]")
+    if not yes and not typer.confirm("Download and install the update?"):
+        console.print("cancelled")
+        raise typer.Exit(code=1)
+
+    console.print("downloading...")
+    result = self_update.perform_update()
+    console.print(f"[green]{result.message}[/green]")
+    console.print("restart your shell or run 'rtwi --version' to verify")
 
 
 if __name__ == "__main__":
