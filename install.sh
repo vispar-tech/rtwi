@@ -5,7 +5,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/vispar-tech/rtwi/main/install.sh | bash
 #
 # Downloads the rtwi onedir build (launcher + _internal/ payload) for the
-# current macOS/architecture and installs it into ~/.local/bin.
+# current macOS/architecture and installs it into ~/.local.
+#
+# Each app gets its own lib directory (~/.local/lib/rtwi/) to avoid conflicts
+# with other PyInstaller-bundled apps that share ~/.local/bin/_internal/.
 #
 # Env overrides:
 #   RTWI_BIN_URL    full URL to the prebuilt binary archive
@@ -24,6 +27,7 @@ say()  { printf '\033[36m[rtwi]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[rtwi]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[31m[rtwi]\033[0m %s\n' "$*" >&2; exit 1; }
 
+lib_dir="$PREFIX/lib/rtwi"
 bin_dir="$PREFIX/bin"
 URL_BASE="${BIN_URL:-https://github.com/$GH_REPO/releases/download/$VERSION}"
 
@@ -51,15 +55,18 @@ download_binary() {
     if [ -d "$tmp/rtwi" ] && [ -x "$tmp/rtwi/rtwi" ]; then
         src="$tmp/rtwi"
     fi
-    mkdir -p "$bin_dir"
-    install -m 0755 "$src/rtwi" "$bin_dir/rtwi"
+    mkdir -p "$lib_dir"
+    install -m 0755 "$src/rtwi" "$lib_dir/rtwi"
     if [ -d "$src/_internal" ]; then
-        rm -rf "$bin_dir/_internal"
-        cp -R "$src/_internal" "$bin_dir/_internal"
-        chmod -R u+rwX,go+rX "$bin_dir/_internal"
+        rm -rf "$lib_dir/_internal"
+        cp -R "$src/_internal" "$lib_dir/_internal"
+        chmod -R u+rwX,go+rX "$lib_dir/_internal"
     fi
     rm -rf "$tmp"
-    say "Installed rtwi to $bin_dir/rtwi"
+    # Symlink binary into ~/.local/bin/
+    mkdir -p "$bin_dir"
+    ln -sf "../lib/rtwi/rtwi" "$bin_dir/rtwi"
+    say "Installed rtwi to $lib_dir/rtwi"
     if ! echo "$PATH" | grep -q "$bin_dir"; then
         warn "Add $bin_dir to your PATH:"
         warn '  echo '\''export PATH="'"$bin_dir"':$PATH"'\'' >> ~/.zshrc'
@@ -85,7 +92,7 @@ main() {
     say "rtwi installer (standalone binary)"
     resolve_latest
     download_binary
-    "$bin_dir/rtwi" --version
+    "$lib_dir/rtwi" --version
     say "Done. Run 'rtwi --help' to get started."
 }
 

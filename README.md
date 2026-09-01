@@ -23,7 +23,7 @@ automatically roll the MAC when the portal blocks you.
 ## Quick install
 
 **Standalone binary** (macOS arm64) — downloads the prebuilt release and
-installs `rtwi` into `~/.local/bin`:
+installs `rtwi` into `~/.local/lib/rtwi` (symlink in `~/.local/bin`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vispar-tech/rtwi/main/install.sh | bash

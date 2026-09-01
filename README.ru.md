@@ -24,7 +24,7 @@
 ## Быстрая установка
 
 **Готовый бинарник** (macOS arm64) — скачивает собранный релиз и ставит
-`rtwi` в `~/.local/bin`:
+`rtwi` в `~/.local/lib/rtwi` (симлинк в `~/.local/bin`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vispar-tech/rtwi/main/install.sh | bash
