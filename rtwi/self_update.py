@@ -163,7 +163,7 @@ def _do_update(
 
     version_str = latest_tag.lstrip("v")
     # rtwi ships macOS aarch64 only
-    filename = f"rtwi-{version_str}-macos-aarch64.tar.gz"
+    filename = f"rtwi-{latest_tag}-macos-aarch64.tar.gz"
     url = f"{DOWNLOAD_BASE}/{latest_tag}/{filename}"
     dest_dir = _bin_dir()
     tmp = tempfile.mkdtemp(prefix="rtwi-update-")
