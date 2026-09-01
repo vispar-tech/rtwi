@@ -8,11 +8,16 @@ from rtwi.models import AuthState, Config
 
 class FakeResponse:
     def __init__(
-        self, url: str, status_code: int = 200, payload: object | None = None
+        self,
+        url: str,
+        status_code: int = 200,
+        payload: object | None = None,
+        text: str = "",
     ) -> None:
         self.url = url
         self.status_code = status_code
         self._payload = payload if payload is not None else {}
+        self.text = text
 
     def json(self) -> object:
         if callable(self._payload):
@@ -274,3 +279,40 @@ def test_confirm_call_bad_json() -> None:
     )
     assert auth.confirm_call(client).state == AuthState.FAILED
     route.json = original_json  # type: ignore[assignment]
+
+
+# --- schedule detection ---
+
+
+def test_portal_status_disabled_by_schedule() -> None:
+    body = "<html><body>Сеть отключена по расписанию предприятия</body></html>"
+    client = _client(
+        {("GET", "/"): FakeResponse("https://a.wifi.rt.ru/forbidden", text=body)}
+    )
+    assert auth.portal_status(client) == AuthState.DISABLED_BY_SCHEDULE
+
+
+def test_portal_status_forbidden_not_schedule() -> None:
+    body = "<html><body>Forbidden: limit reached</body></html>"
+    client = _client(
+        {("GET", "/"): FakeResponse("https://a.wifi.rt.ru/forbidden", text=body)}
+    )
+    assert auth.portal_status(client) == AuthState.FORBIDDEN
+
+
+def test_portal_status_schedule_english() -> None:
+    body = "<html><body>Network disabled by schedule</body></html>"
+    client = _client(
+        {("GET", "/"): FakeResponse("https://a.wifi.rt.ru/forbidden", text=body)}
+    )
+    assert auth.portal_status(client) == AuthState.DISABLED_BY_SCHEDULE
+
+
+def test_authenticate_disabled_by_schedule() -> None:
+    body = "Отключена по расписанию предприятия"
+    client = _client(
+        {("GET", "/"): FakeResponse("https://a.wifi.rt.ru/forbidden", text=body)}
+    )
+    result = auth.authenticate(client, "+79110000000", "call")
+    assert result.state == AuthState.DISABLED_BY_SCHEDULE
+    assert "schedule" in result.message

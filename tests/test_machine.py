@@ -250,3 +250,73 @@ def test_fix_forbidden_roll_no_root(monkeypatch) -> None:  # noqa: ANN001
     )
     result2 = run_fix(machine2)
     assert result2.state == AuthState.FORBIDDEN
+
+
+def test_fix_disabled_by_schedule(monkeypatch) -> None:  # noqa: ANN001
+    machine = _machine(monkeypatch, _config())
+    monkeypatch.setattr(
+        machine,
+        "auth",
+        lambda: AuthResult(
+            AuthState.DISABLED_BY_SCHEDULE, "network disabled by schedule"
+        ),
+    )
+    result = run_fix(machine)
+    assert result.state == AuthState.DISABLED_BY_SCHEDULE
+    assert result.rolls == 0
+    assert "schedule" in result.message
+
+
+def test_fix_disabled_by_schedule_no_roll(monkeypatch) -> None:  # noqa: ANN001
+    machine = _machine(monkeypatch, _config(auto_roll=True, max_rolls=5))
+    roll_count = {"n": 0}
+
+    def track_roll() -> str | None:
+        roll_count["n"] += 1
+        return "02:00:00:00:00:cc"
+
+    monkeypatch.setattr(machine, "roll", track_roll)
+    monkeypatch.setattr(
+        machine,
+        "auth",
+        lambda: AuthResult(AuthState.DISABLED_BY_SCHEDULE, "schedule"),
+    )
+    result = run_fix(machine)
+    assert result.state == AuthState.DISABLED_BY_SCHEDULE
+    assert roll_count["n"] == 0
+
+
+def test_fix_outside_schedule(monkeypatch) -> None:  # noqa: ANN001
+    from datetime import datetime, time
+
+    from rtwi.models import Schedule
+
+    sched = Schedule(
+        enabled=True, start=time(9, 0), end=time(18, 0), days=[0, 1, 2, 3, 4]
+    )
+    machine = _machine(monkeypatch, _config(schedule=sched))
+    # Monday at 20:00 — outside schedule
+    datetime(2025, 1, 6, 20, 0)
+    monkeypatch.setattr("rtwi.fix.is_within_schedule", lambda _s: False)
+    result = run_fix(machine)
+    assert result.state == AuthState.DISABLED_BY_SCHEDULE
+    assert "schedule" in result.message.lower()
+
+
+def test_fix_within_schedule_proceeds(monkeypatch) -> None:  # noqa: ANN001
+    from datetime import time
+
+    from rtwi.models import Schedule
+
+    sched = Schedule(
+        enabled=True, start=time(9, 0), end=time(18, 0), days=[0, 1, 2, 3, 4]
+    )
+    machine = _machine(monkeypatch, _config(schedule=sched))
+    monkeypatch.setattr("rtwi.fix.is_within_schedule", lambda _s: True)
+    monkeypatch.setattr(
+        machine,
+        "auth",
+        lambda: AuthResult(AuthState.SUCCESS, "done"),
+    )
+    result = run_fix(machine)
+    assert result.state == AuthState.SUCCESS

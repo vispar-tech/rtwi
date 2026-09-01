@@ -43,6 +43,7 @@ rtwi fix          # authorize on the portal, auto-rolling the MAC when blocked
 rtwi sms 1234     # submit an SMS confirmation code
 rtwi roll         # roll the MAC (change Wi-Fi adapter MAC; needs root)
 rtwi config       # open ~/.config/rtwi/config.yaml in $EDITOR
+rtwi watch        # background daemon: monitor + auto-authorize
 ```
 
 Let the portal phone you back (default `method: call`) and confirm with
@@ -55,7 +56,18 @@ rtwi fix --sudo
 (self-elevates via sudo when `--sudo` is given) and retries, up to
 `max_rolls` times.
 
-Exit codes:
+### Background daemon
+
+`rtwi watch` polls the portal on a loop and auto-authorizes whenever needed:
+
+```bash
+rtwi watch --interval 60       # check every 60 s
+rtwi watch -i 30 --sudo        # allow MAC rolls, check every 30 s
+```
+
+Ctrl-C stops the daemon gracefully.
+
+### Exit codes
 
 | code | meaning |
 |------|---------|
@@ -65,6 +77,7 @@ Exit codes:
 | 3    | call-timed out |
 | 4    | forbidden (limit reached) |
 | 5    | offline |
+| 6    | network disabled by schedule |
 
 ## Configuration
 
@@ -82,6 +95,34 @@ setting can be overridden with an environment variable.
 | `request_timeout` | `5`         | `RTWI_TIMEOUT`   |
 | `poll_interval`   | `5`         | —                |
 | `max_call_polls`  | `10`        | —                |
+
+### Schedule
+
+When the portal is disabled by schedule (e.g. "Сеть отключена по расписанию
+предприятия"), rtwi detects this automatically and **does not roll the MAC**
+(uselessly).  You can also configure your own working hours so rtwi skips
+authorization outside the allowed window:
+
+```yaml
+phone: +79110000000
+method: call
+schedule:
+  enabled: true
+  start: "09:00"
+  end: "18:00"
+  days: [0, 1, 2, 3, 4]   # Mon-Fri
+```
+
+| key            | default     | description |
+|----------------|-------------|-------------|
+| `enabled`      | `false`     | enable schedule check |
+| `start`        | `08:00`     | start of allowed window (HH:MM) |
+| `end`          | `22:00`     | end of allowed window (HH:MM) |
+| `days`         | `[0,1,2,3,4]` | allowed weekdays (0=Mon .. 6=Sun) |
+
+Days: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun.
+
+The window can wrap past midnight (e.g. `start: "22:00"`, `end: "06:00"`).
 
 Set enough to get started:
 

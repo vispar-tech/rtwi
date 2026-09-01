@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 from types import SimpleNamespace
 
 from typer.testing import CliRunner
@@ -32,7 +33,11 @@ class FakeMachine:
             state=AuthState.SUCCESS, message="done", rolls=0
         )
         self.config = config or SimpleNamespace(
-            auto_roll=True, max_rolls=2, phone=PHONE, method="call"
+            auto_roll=True,
+            max_rolls=2,
+            phone=PHONE,
+            method="call",
+            schedule=SimpleNamespace(enabled=False),
         )
 
     def status(self) -> tuple[WiFiState, AuthState]:
@@ -248,3 +253,63 @@ def test_config_opens_editor(monkeypatch) -> None:  # noqa: ANN001
     result = run("config", input="")
     assert result.exit_code == 0
     assert calls == [["nano", str(cfg.CONFIG_PATH)]]
+
+
+# --- watch command ---
+
+
+def test_watch_success(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(cli, "_make_machine", lambda: FakeMachine())
+    monkeypatch.setattr(
+        cli,
+        "run_fix",
+        lambda _m: SimpleNamespace(state=AuthState.SUCCESS, message="ok", rolls=0),
+    )
+    _patch_time(monkeypatch)
+    result = run("watch", "--interval", "5")
+    assert result.exit_code == 0
+    assert "authorized" in result.stdout
+    assert "watch stopped" in result.stdout
+
+
+def test_watch_disabled_by_schedule(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(cli, "_make_machine", lambda: FakeMachine())
+    monkeypatch.setattr(
+        cli,
+        "run_fix",
+        lambda _m: SimpleNamespace(
+            state=AuthState.DISABLED_BY_SCHEDULE, message="schedule", rolls=0
+        ),
+    )
+    _patch_time(monkeypatch)
+    result = run("watch", "--interval", "5")
+    assert result.exit_code == 0
+    assert "schedule" in result.stdout
+
+
+def test_watch_offline(monkeypatch) -> None:  # noqa: ANN001
+    machine = FakeMachine()
+    machine.connected = lambda: False  # type: ignore[method-assign]
+    monkeypatch.setattr(cli, "_make_machine", lambda: machine)
+    _patch_time(monkeypatch)
+    result = run("watch", "--interval", "5")
+    assert result.exit_code == 0
+    assert "offline" in result.stdout
+
+
+def test_watch_sudo_elevates(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(rollmac, "is_root", lambda: False)
+    elevated: list[list[str]] = []
+    monkeypatch.setattr(rollmac, "self_elevate", lambda cmd: elevated.append(cmd) or 0)
+    result = run("watch", "--sudo")
+    assert result.exit_code == 0
+    assert elevated == [["watch", "--sudo", "--interval", "60"]]
+
+
+def _patch_time(monkeypatch) -> None:  # noqa: ANN001
+    def _raise_kbi(_s: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", _raise_kbi)
+    monkeypatch.setattr(cli.time, "monotonic", lambda: 0)
+    monkeypatch.setattr(signal, "signal", lambda *_a: None)

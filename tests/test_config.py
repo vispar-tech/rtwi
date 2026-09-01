@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import time
 from pathlib import Path
 
 import pytest
@@ -84,3 +85,22 @@ def test_load_missing_creates_file(tmp_path: Path) -> None:
     with path.open() as f:
         data = f.read()
     assert "network: Rostelecom" in data
+
+
+def test_schedule_in_yaml_roundtrip(tmp_path: Path) -> None:
+    from rtwi.models import Schedule
+
+    path = tmp_path / "config.yaml"
+    cfg = Config(
+        schedule=Schedule(
+            enabled=True, start=time(7, 0), end=time(19, 0), days=[1, 3, 5]
+        )
+    )
+    from rtwi.config import save_config
+
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.schedule.enabled is True
+    assert loaded.schedule.start.hour == 7
+    assert loaded.schedule.end.hour == 19
+    assert loaded.schedule.days == [1, 3, 5]

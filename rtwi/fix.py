@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from rtwi.log import get_logger
 from rtwi.machine import RTMachine
-from rtwi.models import AuthState
+from rtwi.models import AuthState, is_within_schedule
 
 logger = get_logger(__name__)
 
@@ -50,6 +50,13 @@ def run_fix(
             "Wi-Fi is not connected to the target network",
         )
 
+    if not is_within_schedule(machine.config.schedule):
+        logger.info("outside configured schedule, skipping authorization")
+        return FixResult(
+            AuthState.DISABLED_BY_SCHEDULE,
+            "current time is outside the configured schedule",
+        )
+
     rolls = 0
     while True:
         result = machine.auth()
@@ -61,6 +68,9 @@ def run_fix(
         if result.state == AuthState.WAIT_CALL:
             confirm = machine.call_loop()
             return FixResult(confirm.state, confirm.message, rolls)
+        if result.state == AuthState.DISABLED_BY_SCHEDULE:
+            logger.info("network is disabled by schedule, cannot authorize")
+            return FixResult(AuthState.DISABLED_BY_SCHEDULE, result.message, rolls)
         if result.state == AuthState.FORBIDDEN:
             outcome, rolls = _maybe_roll(machine, rolls)
             if outcome is not None:

@@ -1,6 +1,8 @@
 import json
 import os
+import signal
 import subprocess
+import time
 
 import typer
 from rich.console import Console
@@ -9,8 +11,9 @@ from rich.table import Table
 from rtwi import __version__, rollmac, self_update
 from rtwi import config as cfg
 from rtwi.fix import run_fix
+from rtwi.log import debug_enabled, setup_logging
 from rtwi.machine import RTMachine
-from rtwi.models import AuthState
+from rtwi.models import AuthState, is_within_schedule
 
 app = typer.Typer(
     help=(
@@ -30,6 +33,7 @@ _EXIT_FOR_STATE = {
     AuthState.WAIT_CALL: 3,
     AuthState.FORBIDDEN: 4,
     AuthState.OFFLINE: 5,
+    AuthState.DISABLED_BY_SCHEDULE: 6,
 }
 
 
@@ -58,8 +62,10 @@ def cli_main(
     version: bool = typer.Option(
         False, "--version", is_eager=True, help="Show version and exit."
     ),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging."),
 ) -> None:
-    """Root CLI entry point; handles --version."""
+    """Root CLI entry point; handles --version and --debug."""
+    setup_logging(debug=debug or debug_enabled())
     if version:
         console.print(f"rtwi {__version__}")
         raise typer.Exit
@@ -101,6 +107,19 @@ def status(
         "—" if wifi_state.ping_ms is None else f"{wifi_state.ping_ms:.1f} ms",
     )
     table.add_row("Portal", _portal_label(portal))
+    sched = machine.config.schedule
+    if sched.enabled:
+        days_str = ",".join(str(d) for d in sched.days)
+        table.add_row(
+            "Schedule",
+            f"{sched.start.strftime('%H:%M')}-{sched.end.strftime('%H:%M')} "
+            f"days=[{days_str}]",
+        )
+        within = is_within_schedule(sched)
+        table.add_row(
+            "Within schedule",
+            "[green]yes[/green]" if within else "[red]no[/red]",
+        )
     console.print(table)
 
 
@@ -111,6 +130,7 @@ def _portal_label(state: AuthState) -> str:
         AuthState.WAIT_SMS: "[yellow]awaiting SMS code[/yellow]",
         AuthState.WAIT_CALL: "[yellow]awaiting call[/yellow]",
         AuthState.FORBIDDEN: "[red]forbidden (limit reached)[/red]",
+        AuthState.DISABLED_BY_SCHEDULE: "[red]network disabled by schedule[/red]",
         AuthState.OFFLINE: "[yellow]offline[/yellow]",
         AuthState.FAILED: "[red]failed[/red]",
         AuthState.PROCESSING: "[yellow]processing[/yellow]",
@@ -199,6 +219,68 @@ def self_update_cmd(
     result = self_update.perform_update()
     console.print(f"[green]{result.message}[/green]")
     console.print("restart your shell or run 'rtwi --version' to verify")
+
+
+@app.command()
+def watch(
+    interval: int = typer.Option(
+        60, "--interval", "-i", help="Check interval in seconds"
+    ),
+    sudo: bool = typer.Option(
+        False, "--sudo", help="elevate to root to allow MAC rolls"
+    ),
+) -> None:
+    """Background daemon: monitor the portal and auto-authorize continuously."""
+    _maybe_sudo(["watch", "--sudo", "--interval", str(interval)], sudo)
+    machine = _make_machine()
+    running = True
+
+    def _handle_signal(signum: int, _frame: object) -> None:
+        nonlocal running
+        console.print(f"\n[yellow]received signal {signum}, shutting down...[/yellow]")
+        running = False
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    console.print(f"[green]watching portal every {interval}s (Ctrl-C to stop)[/green]")
+
+    while running:
+        try:
+            if not machine.connected():
+                console.print("[yellow]offline, waiting...[/yellow]")
+            else:
+                result = run_fix(machine)
+                if result.state == AuthState.SUCCESS:
+                    console.print(
+                        "[green]authorized[/green]"
+                        + (f" (mac rolled {result.rolls}x)" if result.rolls else "")
+                    )
+                elif result.state == AuthState.DISABLED_BY_SCHEDULE:
+                    console.print("[red]network disabled by schedule[/red]")
+                elif result.state == AuthState.WAIT_SMS:
+                    console.print(
+                        "[yellow]SMS code required: run `rtwi sms <code>`[/yellow]"
+                    )
+                elif result.state == AuthState.WAIT_CALL:
+                    console.print(f"[yellow]{result.message}[/yellow]")
+                elif result.state == AuthState.FORBIDDEN:
+                    console.print("[red]forbidden, rolls exhausted[/red]")
+                else:
+                    console.print(f"[red]{result.message}[/red]")
+        except KeyboardInterrupt:
+            break
+        except Exception as exc:
+            console.print(f"[red]error: {exc}[/red]")
+
+        try:
+            end = time.monotonic() + interval
+            while running and time.monotonic() < end:
+                time.sleep(min(1.0, end - time.monotonic()))
+        except KeyboardInterrupt:
+            break
+
+    console.print("[green]watch stopped[/green]")
 
 
 if __name__ == "__main__":

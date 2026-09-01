@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, time
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
@@ -21,6 +22,7 @@ class AuthState(StrEnum):
     WAIT_CALL = "wait_call"
     SUCCESS = "success"
     FORBIDDEN = "forbidden"
+    DISABLED_BY_SCHEDULE = "disabled_by_schedule"
     FAILED = "failed"
 
 
@@ -40,6 +42,52 @@ class WiFiState:
     mac: str
     ip: str
     ping_ms: float | None
+
+
+class Schedule(BaseModel):
+    """Working-schedule window.  When set, rtwi skips auth outside this window."""
+
+    enabled: bool = Field(default=False, description="Enable schedule check")
+    start: time = Field(
+        default=time(8, 0), description="Start of allowed window (HH:MM)"
+    )
+    end: time = Field(default=time(22, 0), description="End of allowed window (HH:MM)")
+    days: list[int] = Field(
+        default=[0, 1, 2, 3, 4],
+        description="Allowed weekdays (0=Mon .. 6=Sun)",
+    )
+
+    @field_validator("days")
+    @classmethod
+    def _check_days(cls, value: list[int]) -> list[int]:
+        for day in value:
+            if not 0 <= day <= 6:
+                raise ValueError(f"day must be 0..6, got {day}")
+        return sorted(set(value))
+
+
+def is_within_schedule(schedule: Schedule, now: datetime | None = None) -> bool:
+    """Return True when *now* falls inside the allowed schedule window.
+
+    Weekdays: 0=Mon .. 6=Sun (matching :class:`datetime.date`).
+    The window can wrap past midnight (e.g. start=22, end=6).
+    """
+    if not schedule.enabled:
+        return True
+
+    dt = now or datetime.now()
+    weekday = dt.weekday()
+
+    if weekday not in schedule.days:
+        return False
+
+    start = schedule.start
+    end = schedule.end
+
+    if start <= end:
+        return start <= dt.time() <= end
+    # wraps past midnight (e.g. 22:00 → 06:00)
+    return dt.time() >= start or dt.time() <= end
 
 
 class Config(BaseModel):
@@ -68,6 +116,9 @@ class Config(BaseModel):
         default=10, ge=1, description="Max call/check poll attempts"
     )
     user_agent: str = Field(default=f"rtwi/{__version__}")
+    schedule: Schedule = Field(
+        default_factory=Schedule, description="Working-schedule window"
+    )
 
     @field_validator("phone")
     @classmethod

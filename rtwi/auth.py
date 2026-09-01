@@ -29,6 +29,21 @@ def make_client(config: Config) -> httpx.Client:
     )
 
 
+_SCHEDULE_KEYWORDS = (
+    "отключена по расписанию",
+    "отключена по расписанию предприятия",
+    "disabled by schedule",
+    "network disabled",
+    "по расписанию предприятия",
+)
+
+
+def _is_schedule_page(body: str) -> bool:
+    """Return True when the forbidden page indicates a scheduled shutdown."""
+    lower = body.lower()
+    return any(kw in lower for kw in _SCHEDULE_KEYWORDS)
+
+
 def _state_from_url(url: str) -> AuthState:
     """Map a portal URL to a coarse AuthState."""
     if url.startswith(_OK_HOSTS):
@@ -48,7 +63,10 @@ def portal_status(client: httpx.Client) -> AuthState:
     """Ask the portal whether this device is authorized."""
     try:
         resp = client.get("/")
-        return _state_from_url(str(resp.url))
+        url = str(resp.url)
+        if "forbidden" in url and _is_schedule_page(resp.text):
+            return AuthState.DISABLED_BY_SCHEDULE
+        return _state_from_url(url)
     except httpx.HTTPError as exc:
         logger.warning("portal status check failed: %s", exc)
         return AuthState.FAILED
@@ -101,11 +119,15 @@ def authenticate(client: httpx.Client, phone: str | None, method: str) -> AuthRe
     phone_str = cast(str, phone)
 
     try:
-        url = str(client.get("/").url)
+        resp = client.get("/")
+        url = str(resp.url)
 
         if url.startswith(_OK_HOSTS):
             return AuthResult(AuthState.SUCCESS, "already authorized")
         if "forbidden" in url:
+            if _is_schedule_page(resp.text):
+                msg = "network disabled by schedule"
+                return AuthResult(AuthState.DISABLED_BY_SCHEDULE, msg)
             return AuthResult(AuthState.FORBIDDEN, "auth limit reached")
         if "auth/index" in url:
             url = str(client.post(url, data={"enter": "1"}).url)

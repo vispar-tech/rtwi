@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import yaml  # type: ignore[import-untyped]
@@ -83,9 +83,11 @@ def _apply_env_overrides(cfg: Config) -> Config:
     if raw := os.environ.get("RTWI_AUTO_ROLL"):
         cfg.auto_roll = raw.lower() in {"1", "true", "yes"}
     if raw := os.environ.get("RTWI_TIMEOUT"):
-        cfg.request_timeout = int(raw)
+        with suppress(ValueError):
+            cfg.request_timeout = int(raw)
     if raw := os.environ.get("RTWI_MAX_ROLLS"):
-        cfg.max_rolls = int(raw)
+        with suppress(ValueError):
+            cfg.max_rolls = int(raw)
     return cfg
 
 
