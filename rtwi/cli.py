@@ -3,12 +3,13 @@ import os
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from rtwi import __version__, rollmac, self_update
+from rtwi import __version__, daemon, rollmac, self_update
 from rtwi import config as cfg
 from rtwi.fix import run_fix
 from rtwi.log import debug_enabled, setup_logging
@@ -26,6 +27,14 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 console = Console()
+
+_TS_FMT = "%H:%M:%S"
+
+
+def _ts() -> str:
+    """Return current time (HH:MM:SS) for sequential log lines."""
+    return time.strftime(_TS_FMT)
+
 
 _EXIT_FOR_STATE = {
     AuthState.FAILED: 1,
@@ -54,6 +63,11 @@ def _maybe_sudo(command: list[str], sudo: bool) -> None:
     if sudo and not rollmac.is_root():
         console.print("[yellow]elevating to root...[/yellow]")
         raise typer.Exit(rollmac.self_elevate(command))
+
+
+def _daemon_start(interval: int) -> None:
+    """Start the watch loop as a detached background daemon."""
+    daemon.start(interval=interval, pid_path=cfg.DAEMON_PID_PATH)
 
 
 @app.callback()
@@ -229,49 +243,61 @@ def watch(
     sudo: bool = typer.Option(
         False, "--sudo", help="elevate to root to allow MAC rolls"
     ),
+    as_daemon: bool = typer.Option(
+        False, "--daemon", help="run in the background instead of the foreground"
+    ),
 ) -> None:
     """Background daemon: monitor the portal and auto-authorize continuously."""
+    if as_daemon:
+        _maybe_sudo(["watch", "--sudo", "--daemon", "--interval", str(interval)], sudo)
+        _daemon_start(interval)
+        return
     _maybe_sudo(["watch", "--sudo", "--interval", str(interval)], sudo)
     machine = _make_machine()
     running = True
 
     def _handle_signal(signum: int, _frame: object) -> None:
         nonlocal running
-        console.print(f"\n[yellow]received signal {signum}, shutting down...[/yellow]")
+        console.print(
+            f"{_ts()} [yellow]received signal {signum}, shutting down...[/yellow]"
+        )
         running = False
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    console.print(f"[green]watching portal every {interval}s (Ctrl-C to stop)[/green]")
+    console.print(
+        f"{_ts()} [green]watching portal every {interval}s (Ctrl-C to stop)[/green]"
+    )
 
     while running:
         try:
             if not machine.connected():
-                console.print("[yellow]offline, waiting...[/yellow]")
+                console.print(f"{_ts()} [yellow]offline, waiting...[/yellow]")
             else:
                 result = run_fix(machine)
                 if result.state == AuthState.SUCCESS:
                     console.print(
-                        "[green]authorized[/green]"
+                        f"{_ts()} [green]authorized[/green]"
                         + (f" (mac rolled {result.rolls}x)" if result.rolls else "")
                     )
                 elif result.state == AuthState.DISABLED_BY_SCHEDULE:
-                    console.print("[red]network disabled by schedule[/red]")
+                    console.print(f"{_ts()} [red]network disabled by schedule[/red]")
                 elif result.state == AuthState.WAIT_SMS:
                     console.print(
-                        "[yellow]SMS code required: run `rtwi sms <code>`[/yellow]"
+                        f"{_ts()} [yellow]"
+                        "SMS code required: run `rtwi sms <code>`[/yellow]"
                     )
                 elif result.state == AuthState.WAIT_CALL:
-                    console.print(f"[yellow]{result.message}[/yellow]")
+                    console.print(f"{_ts()} [yellow]{result.message}[/yellow]")
                 elif result.state == AuthState.FORBIDDEN:
-                    console.print("[red]forbidden, rolls exhausted[/red]")
+                    console.print(f"{_ts()} [red]forbidden, rolls exhausted[/red]")
                 else:
-                    console.print(f"[red]{result.message}[/red]")
+                    console.print(f"{_ts()} [red]{result.message}[/red]")
         except KeyboardInterrupt:
             break
         except Exception as exc:
-            console.print(f"[red]error: {exc}[/red]")
+            console.print(f"{_ts()} [red]error: {exc}[/red]")
 
         try:
             end = time.monotonic() + interval
@@ -280,7 +306,70 @@ def watch(
         except KeyboardInterrupt:
             break
 
-    console.print("[green]watch stopped[/green]")
+    console.print(f"{_ts()} [green]watch stopped[/green]")
+
+
+@app.command()
+def stop(
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation prompt"),
+) -> None:
+    """Stop the running watch daemon."""
+    if not yes and not typer.confirm("Stop the watch daemon?"):
+        console.print("cancelled")
+        raise typer.Exit(code=1)
+    if daemon.stop(cfg.DAEMON_PID_PATH):
+        console.print("[green]daemon stopped[/green]")
+    else:
+        console.print("[yellow]no daemon running[/yellow]")
+
+
+@app.command()
+def logs(
+    follow: bool = typer.Option(
+        True, "--follow/--no-follow", "-f/--follow", help="tail -f style output"
+    ),
+    tail: int = typer.Option(
+        50, "--tail", "-n", min=0, help="lines shown before following"
+    ),
+) -> None:
+    """Tail the daemon log; --no-follow prints the last N lines and exits."""
+    if not cfg.LOG_PATH.exists():
+        console.print(f"[yellow]no log yet: {cfg.LOG_PATH}[/yellow]")
+        return
+    if not follow:
+        _print_log_tail(cfg.LOG_PATH, tail)
+        return
+    try:
+        _follow_log(cfg.LOG_PATH, tail)
+    except KeyboardInterrupt:
+        console.print("\nstopped following logs")
+
+
+def _print_log_tail(path: Path, lines: int) -> None:
+    with path.open(errors="replace") as f:
+        content = f.readlines()
+    for line in content[-lines:]:
+        console.print(line.rstrip())
+
+
+def _follow_log(path: Path, tail: int) -> None:
+    with path.open("rb") as f:
+        pos = f.seek(0, os.SEEK_END)
+    for line in _read_last_lines(path, tail):
+        console.print(line)
+    while True:
+        with path.open("rb") as f:
+            f.seek(pos)
+            for raw in f:
+                console.print(raw.decode(errors="replace").rstrip())
+                pos = f.tell()
+        time.sleep(1)
+
+
+def _read_last_lines(path: Path, lines: int) -> list[str]:
+    with path.open(errors="replace") as f:
+        content = f.readlines()
+    return [ln.rstrip() for ln in content[-lines:]]
 
 
 if __name__ == "__main__":

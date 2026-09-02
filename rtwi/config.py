@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from pydantic import ValidationError
 
 from rtwi.models import Config
@@ -18,6 +18,7 @@ except ImportError:
 
 __all__ = [
     "CONFIG_PATH",
+    "DAEMON_PID_PATH",
     "LOG_PATH",
     "Config",
     "ConfigError",
@@ -48,8 +49,13 @@ def _log_path() -> Path:
     return _base_dir() / "rtwi.log"
 
 
+def _daemon_pid_path() -> Path:
+    return _base_dir() / "rtwi.daemon.pid"
+
+
 CONFIG_PATH = _config_path()
 LOG_PATH = _log_path()
+DAEMON_PID_PATH = _daemon_pid_path()
 
 
 def _lock_for(path: Path) -> Path:

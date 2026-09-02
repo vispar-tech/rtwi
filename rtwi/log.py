@@ -30,7 +30,7 @@ def setup_logging(debug: bool = False) -> logging.Logger:
     root.addHandler(file_handler)
     if debug:
         console_handler = RichHandler(
-            rich_tracebacks=True, show_time=False, show_path=False
+            rich_tracebacks=True, show_time=True, show_path=False
         )
         root.addHandler(console_handler)
     return root

@@ -306,6 +306,47 @@ def test_watch_sudo_elevates(monkeypatch) -> None:  # noqa: ANN001
     assert elevated == [["watch", "--sudo", "--interval", "60"]]
 
 
+def test_watch_daemon_delegates(monkeypatch) -> None:  # noqa: ANN001
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cli, "_daemon_start", lambda interval: calls.append({"interval": interval})
+    )
+    result = run("watch", "--daemon", "--interval", "30")
+    assert result.exit_code == 0
+    assert calls == [{"interval": 30}]
+
+
+def test_stop_stops_daemon(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(cli.daemon, "stop", lambda _path: True)
+    result = run("stop", "--yes")
+    assert result.exit_code == 0
+    assert "daemon stopped" in result.stdout
+
+
+def test_stop_no_daemon(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(cli.daemon, "stop", lambda _path: False)
+    result = run("stop", "--yes")
+    assert result.exit_code == 0
+    assert "no daemon running" in result.stdout
+
+
+def test_logs_tail(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    log = tmp_path / "rtwi.log"
+    log.write_text("line 1\nline 2\n")
+    monkeypatch.setattr(cfg, "LOG_PATH", log)
+    result = run("logs", "--no-follow", "--tail", "10")
+    assert result.exit_code == 0
+    assert "line 1" in result.stdout
+    assert "line 2" in result.stdout
+
+
+def test_logs_no_log(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setattr(cfg, "LOG_PATH", tmp_path / "missing.log")
+    result = run("logs", "--no-follow")
+    assert result.exit_code == 0
+    assert "no log yet" in result.stdout
+
+
 def _patch_time(monkeypatch) -> None:  # noqa: ANN001
     def _raise_kbi(_s: float) -> None:
         raise KeyboardInterrupt
