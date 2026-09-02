@@ -168,9 +168,7 @@ class TestStopDaemon:
 
 
 class TestRestartDaemon:
-    def test_restarts_when_running(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_restarts_when_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
         started: list[int] = []
         monkeypatch.setattr(
             self_update.daemon,
@@ -180,9 +178,7 @@ class TestRestartDaemon:
         self_update._restart_daemon(self_update.DaemonState(daemon_running=True))
         assert started == [60]
 
-    def test_no_restart_when_not_running(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_restart_when_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
         started: list[int] = []
         monkeypatch.setattr(
             self_update.daemon,
