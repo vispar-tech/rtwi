@@ -10,6 +10,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from rich.console import Console
@@ -89,3 +90,40 @@ def stop(pid_path: Path = cfg.DAEMON_PID_PATH) -> bool:
         return False
     pid_path.unlink(missing_ok=True)
     return True
+
+
+def stop_and_wait(pid_path: Path = cfg.DAEMON_PID_PATH) -> bool:
+    """Terminate the daemon and wait for it to exit.
+
+    Returns True if the daemon was running and has been stopped.
+    """
+    pid = load_pid(pid_path)
+    if pid is None or not is_running(pid):
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    for _ in range(50):
+        if not is_running(pid):
+            pid_path.unlink(missing_ok=True)
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def daemon_start_background(
+    interval: int, pid_path: Path = cfg.DAEMON_PID_PATH
+) -> None:
+    """Start the daemon in a detached background process (for restart after update)."""
+    existing = load_pid(pid_path)
+    if existing is not None and is_running(existing):
+        return
+    with cfg.LOG_PATH.open("ab") as log_f:
+        proc = subprocess.Popen(  # noqa: S603
+            _command(interval),
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    save_pid(proc.pid, path=pid_path)

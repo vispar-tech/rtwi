@@ -12,11 +12,37 @@ from typing import NamedTuple
 
 import httpx
 
-from rtwi import __version__
+from rtwi import __version__, daemon
+from rtwi import config as cfg
 
 GH_REPO = "vispar-tech/rtwi"
 RELEASE_URL = f"https://api.github.com/repos/{GH_REPO}/releases/latest"
 DOWNLOAD_BASE = f"https://github.com/{GH_REPO}/releases/download"
+
+
+class DaemonState(NamedTuple):
+    """Tracks whether the rtwi daemon was running before an update."""
+
+    daemon_running: bool
+
+
+def _check_daemon() -> DaemonState:
+    """Check if the rtwi daemon is currently running."""
+    pid = daemon.load_pid(cfg.DAEMON_PID_PATH)
+    return DaemonState(
+        daemon_running=pid is not None and daemon.is_running(pid),
+    )
+
+
+def _stop_daemon() -> None:
+    """Stop the rtwi daemon gracefully."""
+    daemon.stop_and_wait(cfg.DAEMON_PID_PATH)
+
+
+def _restart_daemon(state: DaemonState) -> None:
+    """Restart the rtwi daemon if it was running before the update."""
+    if state.daemon_running:
+        daemon.daemon_start_background(60, cfg.DAEMON_PID_PATH)
 
 
 class UpdateResult(NamedTuple):
@@ -94,6 +120,9 @@ def perform_update(
     progress_fn: object | None = None,
 ) -> UpdateResult:
     """Download and install the latest release, replacing the current binary."""
+    state = _check_daemon()
+    if state.daemon_running:
+        _stop_daemon()
     close = client is None
     if client is None:
         client = httpx.Client(follow_redirects=True)
@@ -102,6 +131,7 @@ def perform_update(
     finally:
         if close:
             client.close()
+        _restart_daemon(state)
 
 
 def _download_archive(

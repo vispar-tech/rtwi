@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Self
 
+import pytest
+
 from rtwi import self_update
 
 
@@ -132,3 +134,60 @@ def test_install_extracted_success(tmp_path: Path) -> None:
     assert err is None
     assert (dest / "rtwi").exists()
     assert (dest / "_internal" / "lib.txt").exists()
+
+
+class TestDaemonState:
+    def test_fields(self) -> None:
+        s = self_update.DaemonState(daemon_running=True)
+        assert s.daemon_running is True
+
+
+class TestCheckDaemon:
+    def test_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(self_update.daemon, "load_pid", lambda _: None)
+        state = self_update._check_daemon()
+        assert state.daemon_running is False
+
+    def test_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(self_update.daemon, "load_pid", lambda _: 123)
+        monkeypatch.setattr(self_update.daemon, "is_running", lambda _: True)
+        state = self_update._check_daemon()
+        assert state.daemon_running is True
+
+
+class TestStopDaemon:
+    def test_stops_daemon(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stopped: list[str] = []
+        monkeypatch.setattr(
+            self_update.daemon,
+            "stop_and_wait",
+            lambda p: stopped.append(str(p)) or True,
+        )
+        self_update._stop_daemon()
+        assert len(stopped) == 1
+
+
+class TestRestartDaemon:
+    def test_restarts_when_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started: list[int] = []
+        monkeypatch.setattr(
+            self_update.daemon,
+            "daemon_start_background",
+            lambda interval, pid: started.append(interval),
+        )
+        self_update._restart_daemon(self_update.DaemonState(daemon_running=True))
+        assert started == [60]
+
+    def test_no_restart_when_not_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started: list[int] = []
+        monkeypatch.setattr(
+            self_update.daemon,
+            "daemon_start_background",
+            lambda interval, pid: started.append(interval),
+        )
+        self_update._restart_daemon(self_update.DaemonState(daemon_running=False))
+        assert started == []
